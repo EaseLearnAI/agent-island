@@ -10,7 +10,9 @@ import SwiftUI
 struct ClaudeCodeSource: AgentSource {
     let info = AgentInfo(id: "claude", name: "Claude Code", short: "Claude",
                          color: Color(red: 0.85, green: 0.47, blue: 0.34),
-                         bundleIDs: ["com.anthropic.claudefordesktop"], appNames: ["Claude"], cli: true)
+                         bundleIDs: ["com.anthropic.claudefordesktop"], appNames: ["Claude.app"], cli: true,
+                         iconApps: ["Claude Code URL Handler"], monogram: "C",
+                         iconURLs: ["https://github.com/anthropics.png?size=256"])
 
     func root(_ home: String) -> String {
         if home == NSHomeDirectory(), let d = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"], !d.isEmpty { return d }

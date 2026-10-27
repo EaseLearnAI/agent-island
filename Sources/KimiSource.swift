@@ -9,7 +9,8 @@ import SwiftUI
 struct KimiSource: AgentSource {
     let info = AgentInfo(id: "kimi", name: "Kimi Code", short: "Kimi",
                          color: Color(red: 0.36, green: 0.55, blue: 1.0),
-                         bundleIDs: ["com.kimi.code.desktop"], appNames: ["Kimi Code"], cli: false)
+                         bundleIDs: ["com.kimi.code.desktop"], appNames: ["Kimi Code"], cli: false, monogram: "K",
+                         iconURLs: ["https://github.com/MoonshotAI.png?size=256"])
 
     func root(_ home: String) -> String { home + "/.kimi-code" }
 
@@ -47,6 +48,9 @@ struct KimiSource: AgentSource {
             guard line.contains("\"envelope\""), let o = Files.json(line), let env = o["envelope"] as? [String: Any],
                   let type = env["type"] as? String else { continue }
             let p = env["payload"] as? [String: Any] ?? [:]
+            // the request can be written just before OR just after the state change; remember the newest one
+            let isRequest = type.hasSuffix(".requested") && (type.contains("approval") || type.contains("question"))
+            if isRequest && (askPayload == nil || type.hasPrefix("permission.")) { askPayload = p }
             if !a.found {
                 guard type == "event.session.work_changed" else { continue }
                 a.found = true
@@ -56,11 +60,7 @@ struct KimiSource: AgentSource {
                 if a.pending == "none" { break }
                 continue
             }
-            // pending: the request that caused it was written just before the state change
-            if type.hasSuffix(".requested"), type.contains("approval") || type.contains("question") {
-                if askPayload == nil || type.hasPrefix("permission.") || type.hasPrefix("question.") { askPayload = p }
-                if type.hasPrefix("permission.") || type.hasPrefix("question.") { break }
-            }
+            if isRequest && askPayload != nil { break }
             if type == "turn.started" { break }
         }
         if a.pending != "none" {

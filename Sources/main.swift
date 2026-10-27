@@ -6,6 +6,9 @@
 //   --agents kimi,zcode                      only read these agents (works with every mode)
 //   --home PATH                              look for agent data under PATH instead of ~ (fixtures)
 //   --open ID|TITLE                          jump to a session like a click on the island (prints hit / miss)
+//   --icons [OUT_DIR]                        print where each agent icon comes from (override / app / monogram), optionally write PNGs
+//   --conflicts / --takeover / --restore     notch ownership: other notch apps, take over (suspend them), restore
+//   --fetch-icons [--all]                    download missing agent icons from each project's official GitHub
 //   --check                                  print environment JSON (agents / permissions / login item / location)
 //   --preview KIND [--seconds N]             render a UI state with sample data, print the window number, stay N s
 //                                            KIND: compact / list / list-ax / empty / nodata / flash-done / flash-waiting / flash-failed / guide:0…4
@@ -66,9 +69,10 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 只留一个实例：再打开一次（比如双击 App）就让已经在跑的那个弹出引导，自己退出
-        if preview == nil && Bundle.main.bundleIdentifier == bundleID {
-            let others = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { $0.processIdentifier != getpid() }
-            if !others.isEmpty {
+        // one notch owner, whatever copy / version is launched (dev builds included): the second one hands over and quits
+        if preview == nil && !CommandLine.arguments.contains("--selftest") {
+            if !NotchGuard.acquireInstanceLock() {
+                print("另一个 Agent Island 已在运行：\(NotchGuard.lockHolder() ?? "?")，交给它处理后退出")
                 DistributedNotificationCenter.default().postNotificationName(reopenNote, object: nil, userInfo: nil, deliverImmediately: true)
                 exit(0)
             }
@@ -174,7 +178,47 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 guard let self else { return }
                 self.liveBusy = false
                 self.model.applyLive(snap)
+                self.applyNotchOwnership()
                 self.refreshStatus()
+            }
+        }
+    }
+
+    // MARK: 刘海归属
+
+    var conflicts: [NotchApp] = []
+    var yielding = false
+
+    /// Another notch app is running and the user has not taken the notch over: stay in the menu bar only.
+    func applyNotchOwnership() {
+        conflicts = NotchGuard.conflicts()
+        let show = NotchGuard.shouldShow(conflicts)
+        guard show == yielding || panel.isVisible != show else { return }
+        yielding = !show
+        if show { layout() } else { panel.orderOut(nil) }
+        print(show ? "notch: owned" : "notch: yielding to \(conflicts.map(\.name).joined(separator: ", "))")
+        fflush(stdout)
+    }
+
+    @objc func takeOverNotch() {
+        let done = NotchGuard.takeOver()
+        print("takeover: \(done.map(\.name))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.applyNotchOwnership() }
+    }
+
+    @objc func restoreSuspended() {
+        let done = NotchGuard.restore()
+        print("restore: \(done)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { self.applyNotchOwnership() }
+    }
+
+    @objc func fetchIcons() {
+        DispatchQueue.global().async {
+            let got = IconFetcher.fetchMissing()
+            DispatchQueue.main.async {
+                AgentIcons.reload()
+                self.model.objectWillChange.send()
+                self.alert("助手图标", got.isEmpty ? "没有需要下载的图标（都已经有了）。" : "已从各项目官方 GitHub 下载：\(got.joined(separator: "、"))")
             }
         }
     }
@@ -242,6 +286,7 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let active = model.activeSessions.count
         b.title = active > 0 ? " \(active)" : ""
         b.contentTintColor = model.waiting > 0 ? NSColor.systemOrange : nil
+        if yielding { b.title = " ⏸" }
         b.toolTip = "\(appName)：\(model.running) 进行中 · \(model.waiting) 等你回答"
     }
 
@@ -255,6 +300,12 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if yielding {
+            let names = conflicts.map(\.name).joined(separator: "、")
+            menu.addItem(item("刘海正被 \(names) 占用，灵动岛已让位", nil))
+            menu.addItem(item("接管刘海（停用 \(names)，随时可恢复）", #selector(takeOverNotch)))
+            menu.addItem(.separator())
+        }
         menu.addItem(item(model.online ? "\(model.running) 进行中 · \(model.waiting) 等你回答 · \(model.stalled) 没动静" : (model.error ?? "未找到 AI 助手数据"), nil))
         let sessions = model.live.prefix(8)
         if !sessions.isEmpty {
@@ -262,6 +313,7 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for s in sessions {
                 let it = item("\(stateName(s.state)) · \(s.agentShort) · \(s.name)", #selector(openSessionItem(_:)))
                 it.representedObject = s.id
+                it.image = AgentIcons.menuImage(s.agent)
                 it.toolTip = [s.project, s.question].compactMap { $0 }.joined(separator: " · ")
                 menu.addItem(it)
             }
@@ -273,6 +325,7 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for s in Agents.all where AppLocator.installed(s.info) != nil || !AppLocator.running(s.info).isEmpty {
             let it = item(s.info.name, #selector(openAgentItem(_:)))
             it.representedObject = s.info.id
+            it.image = AgentIcons.menuImage(s.info.id)
             openMenu.addItem(it)
         }
         if openMenu.items.isEmpty { openMenu.addItem(item("没有检测到桌面端助手", nil)) }
@@ -295,11 +348,18 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let it = item(found ? "\(s.info.name)\(n > 0 ? "（\(n) 个进行中）" : "")" : "\(s.info.name)（未检测到）",
                           #selector(toggleAgent(_:)), on: Agents.isEnabled(s.info.id) && found, enabled: found)
             it.representedObject = s.info.id
+            it.image = AgentIcons.menuImage(s.info.id)
             source.addItem(it)
         }
         sourceItem.submenu = source
         menu.addItem(sourceItem)
 
+        if AgentIcons.missing().count > 0 {
+            menu.addItem(item("下载缺失的助手图标（\(AgentIcons.missing().count) 个）…", #selector(fetchIcons)))
+        }
+        if !NotchGuard.suspended.isEmpty {
+            menu.addItem(item("恢复被停用的刘海程序（\(NotchGuard.suspended.map(\.name).joined(separator: "、"))）", #selector(restoreSuspended)))
+        }
         menu.addItem(.separator())
         menu.addItem(item("新手引导…", #selector(openGuide)))
         menu.addItem(item("关于 \(appName)", #selector(about)))
@@ -345,6 +405,7 @@ final class IslandController: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.activate()
         NSApp.orderFrontStandardAboutPanel(options: [
             .applicationName: appName,
+            .applicationVersion: appVersionLong,
             .credits: NSAttributedString(string: "把 AI 编程助手的会话进度放到刘海上。\n支持 Claude Code / Codex / Kimi Code / ZCode / MiniMax Code。\n只在本机只读状态文件，不联网、不上传数据。\ngithub.com/EaseLearnAI/agent-island",
                                          attributes: [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]),
         ])
@@ -555,7 +616,24 @@ if let a = argValue("--agents") {
 }
 if let h = argValue("--home") { Agents.home = h }
 if args.contains("--version") {
-    print(appVersion)
+    print(appVersionLong)
+    exit(0)
+}
+if args.contains("--conflicts") {
+    struct Out: Encodable { let conflicts: [NotchApp]; let owns: Bool; let suspended: [Suspended]; let instance: String? }
+    printJSON(Out(conflicts: NotchGuard.conflicts(), owns: NotchGuard.owns, suspended: NotchGuard.suspended, instance: NotchGuard.lockHolder()))
+    exit(0)
+}
+if args.contains("--takeover") {
+    printJSON(NotchGuard.takeOver())
+    exit(0)
+}
+if args.contains("--restore") {
+    printJSON(NotchGuard.restore())
+    exit(0)
+}
+if args.contains("--fetch-icons") {
+    printJSON(IconFetcher.fetchMissing(all: args.contains("--all")))
     exit(0)
 }
 if args.contains("--snapshot") {
@@ -571,6 +649,18 @@ if let target = argValue("--open") {
     AgentJump.open(s)
     RunLoop.main.run(until: Date().addingTimeInterval(Double(argValue("--seconds") ?? "") ?? 5))
     print("frontmost: \(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "-")")
+    exit(0)
+}
+if args.contains("--icons") {
+    // icon resolution per agent (override / app / monogram); with a folder argument also writes <id>.png there
+    let dir = argValue("--icons").flatMap { $0.hasPrefix("--") ? nil : $0 }
+    if let dir { try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true) }
+    let list = Agents.all.filter { Agents.isEnabled($0.info.id) }.map { s -> IconInfo in
+        let i = AgentIcons.info(s.info.id)
+        if let dir { _ = AgentIcons.writePNG(s.info.id, to: dir + "/\(s.info.id).png") }
+        return i
+    }
+    printJSON(list)
     exit(0)
 }
 if args.contains("--check") {

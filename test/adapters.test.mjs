@@ -86,6 +86,8 @@ kimiSession('session_run', 'Kimi running', [wc(true)])
 kimiSession('session_ok', 'Kimi done', [wc(true), wc(false, 'none', 'completed')])
 kimiSession('session_ask', 'Kimi approval', [wc(true), { type: 'permission.approval.requested', toolName: 'Bash', action: 'Running: rm -rf dist' }, wc(true, 'approval')])
 kimiSession('session_bad', 'Kimi failed', [wc(true), wc(false, 'none', 'failed')])
+// real Kimi order: the question request is journaled right AFTER the state change
+kimiSession('session_q', 'Kimi question', [wc(true), wc(true, 'question'), { type: 'event.question.requested', questions: [{ id: 'q_0', question: 'Cats or dogs?' }] }])
 w('.kimi-code/server/instances/x.json', JSON.stringify({ pid: 1, heartbeat_at: now }))
 
 test('kimi code: running / done / waiting (approval text) / failed', () => {
@@ -95,6 +97,8 @@ test('kimi code: running / done / waiting (approval text) / failed', () => {
   assert.equal(s['Kimi approval'].state, 'waiting')
   assert.equal(s['Kimi approval'].question, '等你批准：Running: rm -rf dist')
   assert.equal(s['Kimi failed'].state, 'failed')
+  assert.equal(s['Kimi question'].state, 'waiting')
+  assert.equal(s['Kimi question'].question, 'Cats or dogs?')
 })
 
 test('kimi code: busy session with a dead app counts as stopped', () => {
@@ -150,9 +154,162 @@ test('minimax code: running / waiting', () => {
 test('all agents merged, waiting first, ids namespaced', () => {
   const snap = snapshot('claude,codex,kimi,zcode,mcode', { AGENT_ISLAND_ZCODE_RUNNING: '1' })
   assert.deepEqual([...snap.agents].sort(), ['claude', 'codex', 'kimi', 'mcode', 'zcode'])
+  // ids stay unique across agents
   assert.equal(snap.sessions[0].state, 'waiting')
   assert.ok(snap.sessions.every((s) => s.id.startsWith(s.agent + ':')))
   assert.deepEqual(snap.issues, {})
+})
+
+// ---------- Icons ----------
+const icons = (agents, env = {}, dir) => JSON.parse(execFileSync(BIN, ['--icons', ...(dir ? [dir] : []), '--agents', agents], { env: { ...process.env, ...env } }))
+const pngSize = (p) => { const b = fs.readFileSync(p); return [b.readUInt32BE(16), b.readUInt32BE(20)] }
+
+test('icons: monogram fallback when no app icon is available, PNGs written', () => {
+  const out = path.join(home, 'icons-out')
+  const list = icons('claude,codex,kimi,zcode,mcode', { AGENT_ISLAND_NO_APP_ICONS: '1', AGENT_ISLAND_ICON_DIR: path.join(home, 'none'), AGENT_ISLAND_FETCHED_ICON_DIR: path.join(home, 'none2') }, out)
+  assert.deepEqual(list.map((i) => i.source), ['monogram', 'monogram', 'monogram', 'monogram', 'monogram'])
+  for (const i of list) assert.deepEqual(pngSize(path.join(out, i.agent + '.png')), [128, 128])
+})
+
+test('icons: user override wins over everything', () => {
+  const dir = path.join(home, 'icon-override')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.copyFileSync(path.join(home, 'icons-out', 'kimi.png'), path.join(dir, 'zcode.png'))
+  const list = icons('kimi,zcode', { AGENT_ISLAND_NO_APP_ICONS: '1', AGENT_ISLAND_ICON_DIR: dir, AGENT_ISLAND_FETCHED_ICON_DIR: path.join(home, 'none2') })
+  assert.equal(list.find((i) => i.agent === 'zcode').source, 'override')
+  assert.equal(list.find((i) => i.agent === 'kimi').source, 'monogram')
+})
+
+// Real apps on this Mac (skipped when Kimi Code / ZCode are not installed)
+for (const [id, app] of [['kimi', '/Applications/Kimi Code.app'], ['zcode', '/Applications/ZCode.app']]) {
+  test('icons: ' + id + ' uses the installed app icon', { skip: !fs.existsSync(app) && app + ' not installed' }, () => {
+    const i = icons(id, { AGENT_ISLAND_ICON_DIR: path.join(home, 'none') })[0]
+    assert.equal(i.source, 'app')
+    assert.equal(i.path, app)
+  })
+}
+
+// ---------- DeepSeek Harness (formats from deepseek-ai/deepseek-harness snapshots) ----------
+const dshEv = (type, data) => ({ type, data })
+const dshSession = (proj, sid, events, { zstd = false, depth = 0 } = {}) => {
+  const lines = [{ type: 'session', version: 4, id: sid, createdAt: now, cwd: '/work/' + proj, isSeeded: false, delegationDepth: depth }, ...events]
+  const rel = '.dsh/sessions/' + proj + '/' + sid + '/session.v4.jsonl'
+  if (!zstd) return w(rel, jsonl(lines))
+  // one zstd frame per append, like dsh does
+  const file = path.join(home, rel + '.zstd')
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  const frames = lines.map((l) => execFileSync(ZSTD, ['-cq'], { input: JSON.stringify(l) + '\n' }))
+  fs.writeFileSync(file, Buffer.concat(frames))
+}
+const ZSTD = ['/opt/homebrew/bin/zstd', '/usr/local/bin/zstd'].find(fs.existsSync)
+dshSession('app', 'run', [dshEv('session/title', { title: 'DSH running' }), dshEv('turn/start', { turn: 1 })])
+dshSession('app', 'ok', [dshEv('session/title', { title: 'DSH done' }), dshEv('turn/start', { turn: 1 }), dshEv('turn/end', { reason: { kind: 'completed' } })])
+dshSession('app', 'err', [dshEv('session/title', { title: 'DSH error' }), dshEv('turn/start', { turn: 1 }), dshEv('turn/end', { reason: { kind: 'error', error: { message: 'HTTP 401' } } })])
+dshSession('app', 'abort', [dshEv('session/title', { title: 'DSH aborted' }), dshEv('turn/start', { turn: 1 }), dshEv('turn/end', { reason: { kind: 'aborted', reason: { kind: 'user' } } })])
+dshSession('app', 'appr', [dshEv('session/title', { title: 'DSH approval' }), dshEv('turn/start', { turn: 1 }),
+  dshEv('approval/asked', { id: 'a1', toolName: 'run_code', reason: 'escalate sandbox to workspace-write' })])
+dshSession('app', 'ask', [dshEv('session/title', { title: 'DSH ask' }), dshEv('turn/start', { turn: 1 }),
+  dshEv('tool/call', { callId: 'c1', name: 'ask_user_question', arguments: JSON.stringify({ questions: [{ id: 'q', question: 'Which color?' }] }) })])
+dshSession('app', 'answered', [dshEv('session/title', { title: 'DSH answered' }), dshEv('turn/start', { turn: 1 }),
+  dshEv('approval/asked', { id: 'a2', toolName: 'bash' }), dshEv('approval/decided', { id: 'a2', outcome: 'allowed-once' })])
+dshSession('app', 'child', [dshEv('session/title', { title: 'DSH child' }), dshEv('turn/start', { turn: 1 })], { depth: 1 })
+if (ZSTD) dshSession('app', 'z', [dshEv('session/title', { title: 'DSH zstd' }), dshEv('turn/start', { turn: 1 }), dshEv('turn/end', { reason: { kind: 'completed' } })], { zstd: true })
+
+test('deepseek harness: running / done / failed / stopped / waiting, sub-agents hidden', () => {
+  const s = byTitle(snapshot('dsh'))
+  assert.equal(s['DSH running'].state, 'running')
+  assert.equal(s['DSH done'].state, 'done')
+  assert.equal(s['DSH error'].state, 'failed')
+  assert.equal(s['DSH aborted'].state, 'stopped')
+  assert.equal(s['DSH approval'].state, 'waiting')
+  assert.equal(s['DSH approval'].question, '等你批准：escalate sandbox to workspace-write')
+  assert.equal(s['DSH ask'].question, 'Which color?')
+  assert.equal(s['DSH answered'].state, 'running')
+  assert.equal(s['DSH child'], undefined)
+  assert.equal(s['DSH done'].project, 'app')
+})
+
+test('deepseek harness: zstd-compressed logs (one frame per append)', { skip: !ZSTD && 'zstd CLI not installed' }, () => {
+  const s = byTitle(snapshot('dsh'))
+  assert.equal(s['DSH zstd'].state, 'done')
+})
+
+// ---------- Gemini CLI (formats from google-gemini/gemini-cli chatRecordingService) ----------
+const gm = (slug, name, rows) => w('.gemini/tmp/' + slug + '/chats/session-2026-10-27T12-00-' + name + '.jsonl', jsonl(rows))
+w('.gemini/projects.json', JSON.stringify({ projects: { '/work/site': 'site' } }))
+const gmeta = (id) => ({ sessionId: id, projectHash: 'h', startTime: iso(now), lastUpdated: iso(now), kind: 'main' })
+const gmsg = (id, type, content, toolCalls) => ({ id, timestamp: iso(now), type, content, ...(toolCalls ? { toolCalls } : {}) })
+gm('site', 'a', [gmeta('a'), gmsg('1', 'user', [{ text: 'Gemini running' }]), gmsg('2', 'gemini', '', [{ id: 't', name: 'run_shell_command', args: {}, status: 'executing' }])])
+gm('site', 'b', [gmeta('b'), gmsg('1', 'user', [{ text: 'Gemini approval' }]), gmsg('2', 'gemini', '', [{ id: 't', name: 'write_file', displayName: 'WriteFile', args: {}, status: 'awaiting_approval' }])])
+gm('site', 'c', [gmeta('c'), gmsg('1', 'user', [{ text: 'Gemini ask' }]), gmsg('2', 'gemini', '', [{ id: 't', name: 'ask_user', args: { questions: [{ question: 'Tabs or spaces?' }] }, status: 'executing' }])])
+gm('site', 'd', [gmeta('d'), gmsg('1', 'user', [{ text: 'Gemini error' }]), gmsg('2', 'error', 'quota exceeded')])
+// the same message id re-appended with updated tool status: last line wins
+gm('site', 'e', [gmeta('e'), gmsg('1', 'user', [{ text: 'Gemini rewritten' }]),
+  gmsg('2', 'gemini', '', [{ id: 't', name: 'write_file', args: {}, status: 'awaiting_approval' }]),
+  gmsg('2', 'gemini', '', [{ id: 't', name: 'write_file', args: {}, status: 'executing' }])])
+
+test('gemini cli: running / waiting (approval + ask_user) / failed, last line per id wins', () => {
+  const s = byTitle(snapshot('gemini'))
+  assert.equal(s['Gemini running'].state, 'running')
+  assert.equal(s['Gemini approval'].state, 'waiting')
+  assert.equal(s['Gemini approval'].question, '等你批准：WriteFile')
+  assert.equal(s['Gemini ask'].question, 'Tabs or spaces?')
+  assert.equal(s['Gemini error'].state, 'failed')
+  assert.equal(s['Gemini rewritten'].state, 'running')
+  assert.equal(s['Gemini running'].project, 'site')
+  assert.equal(s['Gemini running'].ws, '/work/site')
+})
+
+// ---------- Qwen Code (formats from QwenLM/qwen-code chatRecordingService) ----------
+const qr = (type, extra = {}) => ({ uuid: Math.random().toString(36).slice(2), parentUuid: null, sessionId: 's', timestamp: iso(now), type, cwd: '/work/qwen-app', ...extra })
+const qtext = (role, text) => ({ message: { role, parts: [{ text }] } })
+w('.qwen/projects/-work-qwen-app/chats/q1.jsonl', jsonl([qr('user', qtext('user', 'Qwen running')), qr('assistant', { message: { role: 'model', parts: [{ functionCall: { id: 'f1', name: 'run_shell_command', args: {} } }] } })]))
+w('.qwen/projects/-work-qwen-app/chats/q2.jsonl', jsonl([qr('user', qtext('user', 'Qwen done')), qr('assistant', qtext('model', 'ok')), qr('system', { subtype: 'turn_result', systemPayload: { promptId: 'p', state: 'completed', endedAt: now } })]))
+w('.qwen/projects/-work-qwen-app/chats/q3.jsonl', jsonl([qr('user', qtext('user', 'Qwen cancelled')), qr('system', { subtype: 'turn_result', systemPayload: { promptId: 'p', state: 'cancelled', endedAt: now } })]))
+w('.qwen/projects/-work-qwen-app/chats/q4.jsonl', jsonl([qr('user', qtext('user', 'Qwen error')), qr('system', { subtype: 'turn_result', systemPayload: { promptId: 'p', state: 'error', endedAt: now, error: { message: 'x' } } })]))
+w('.qwen/projects/-work-qwen-app/chats/q5.jsonl', jsonl([qr('user', qtext('user', 'Qwen ask')), qr('assistant', { message: { role: 'model', parts: [{ functionCall: { id: 'f2', name: 'ask_user_question', args: { questions: [{ question: 'Deploy now?' }] } } }] } })]))
+
+test('qwen code: running / done / stopped / failed / waiting', () => {
+  const s = byTitle(snapshot('qwen'))
+  assert.equal(s['Qwen running'].state, 'running')
+  assert.equal(s['Qwen done'].state, 'done')
+  assert.equal(s['Qwen cancelled'].state, 'stopped')
+  assert.equal(s['Qwen error'].state, 'failed')
+  assert.equal(s['Qwen ask'].state, 'waiting')
+  assert.equal(s['Qwen ask'].question, 'Deploy now?')
+  assert.equal(s['Qwen done'].project, 'qwen-app')
+})
+
+// ---------- OpenCode (schema from sst/opencode packages/core/src/session/sql.ts) ----------
+sql('.local/share/opencode/opencode.db', "CREATE TABLE session_v2 (id TEXT, parent_id TEXT, title TEXT, directory TEXT, time_created INTEGER, time_updated INTEGER, " +
+  "time_idle INTEGER, idle_outcome TEXT, time_archived INTEGER);" +
+  "INSERT INTO session_v2 VALUES ('o1',NULL,'OC running','/work/oc'," + now + "," + now + ",NULL,NULL,NULL)," +
+  "('o2',NULL,'OC done','/work/oc'," + now + "," + (now - 5000) + "," + now + ",'succeeded',NULL)," +
+  "('o3',NULL,'OC failed','/work/oc'," + now + "," + (now - 5000) + "," + now + ",'failed',NULL)," +
+  "('o4',NULL,'OC interrupted','/work/oc'," + now + "," + (now - 5000) + "," + now + ",'interrupted',NULL)," +
+  "('o5',NULL,'OC busy again','/work/oc'," + now + "," + now + "," + (now - 60000) + ",'succeeded',NULL)," +
+  "('o6','o1','OC child','/work/oc'," + now + "," + now + ",NULL,NULL,NULL);")
+
+test('opencode (session_v2): running / done / failed / stopped, children hidden', () => {
+  const s = byTitle(snapshot('opencode'))
+  assert.equal(s['OC running'].state, 'running')
+  assert.equal(s['OC done'].state, 'done')
+  assert.equal(s['OC failed'].state, 'failed')
+  assert.equal(s['OC interrupted'].state, 'stopped')
+  assert.equal(s['OC busy again'].state, 'running')
+  assert.equal(s['OC child'], undefined)
+})
+
+// ---------- Notch ownership & version ----------
+test('notch: a running notch app is reported as a conflict', () => {
+  const out = JSON.parse(execFileSync(BIN, ['--conflicts'], { env: { ...process.env, AGENT_ISLAND_FAKE_CONFLICT: 'OtherIsland' } }))
+  assert.equal(out.conflicts[0].name, 'OtherIsland')
+  assert.ok('owns' in out && Array.isArray(out.suspended))
+})
+
+test('version string carries build and commit', () => {
+  const v = execFileSync(BIN, ['--version']).toString().trim()
+  assert.match(v, /^\d+\.\d+\.\d+ \(build \d+(\.\d+)?, [0-9a-z]+\)$|^dev \(build 0, local\)$/)
 })
 
 test.after(() => fs.rmSync(home, { recursive: true, force: true }))

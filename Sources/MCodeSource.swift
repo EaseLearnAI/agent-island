@@ -5,7 +5,8 @@ import SwiftUI
 struct MCodeSource: AgentSource {
     let info = AgentInfo(id: "mcode", name: "MiniMax Code", short: "MCode",
                          color: Color(red: 41 / 255, green: 182 / 255, blue: 254 / 255),
-                         bundleIDs: ["com.minimax.agent"], appNames: ["MiniMax Code", "MiniMax"], cli: false)
+                         bundleIDs: ["com.minimax.agent.cn", "com.minimax.agent"], appNames: ["MiniMax Code.app"], cli: false,
+                         monogram: "M", iconURLs: ["https://github.com/MiniMax-AI.png?size=256"])
 
     /// ~/.minimax and other ~/.minimax-* profiles; the most recently written database wins.
     func candidates(home: String) -> [String] {

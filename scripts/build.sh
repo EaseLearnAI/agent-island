@@ -14,6 +14,10 @@ export PATH=/usr/bin:/bin:/usr/sbin:/sbin:$PATH
 HERE="$(cd "$(dirname "$0")/.." && pwd)"          # repo root
 REPO="$HERE"
 VERSION="$(tr -d '[:space:]' < "$HERE/VERSION")"
+# build number = commits on HEAD (monotonic), commit = short sha (+dirty) — shown in About / --version / --check
+BUILD="$(git -C "$HERE" rev-list --count HEAD 2>/dev/null || echo 0)"
+COMMIT="$(git -C "$HERE" rev-parse --short HEAD 2>/dev/null || echo local)"
+if [ -n "$(git -C "$HERE" status --porcelain -- Sources scripts 2>/dev/null)" ]; then COMMIT="$COMMIT-dirty"; fi
 OUT="$REPO/build"
 APP="$OUT/AgentIsland.app"
 TMP="$REPO/test/tmp/build"
@@ -22,7 +26,7 @@ trap 'rm -rf "$TMP"' EXIT
 BUNDLE_ID="io.github.easelearnai.agent-island"
 NAME="AgentIsland-$VERSION"
 
-echo "==> Agent Island $VERSION"
+echo "==> Agent Island $VERSION (build $BUILD, $COMMIT)"
 rm -rf "$APP" "$OUT"/AgentIsland-*.dmg "$OUT"/AgentIsland-*.zip
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
@@ -51,7 +55,8 @@ cat > "$APP/Contents/Info.plist" <<EOF
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$VERSION</string>
-  <key>CFBundleVersion</key><string>$VERSION</string>
+  <key>CFBundleVersion</key><string>$BUILD</string>
+  <key>AgentIslandCommit</key><string>$COMMIT</string>
   <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

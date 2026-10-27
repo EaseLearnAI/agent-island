@@ -5,6 +5,10 @@ import ApplicationServices
 import ServiceManagement
 
 let appVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "dev"
+let appBuild = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "0"
+let appCommit = (Bundle.main.infoDictionary?["AgentIslandCommit"] as? String) ?? "local"
+/// "2.1.0 (build 7, a1b2c3d)" — shown in About, --version and --check so it is always clear which copy is running
+let appVersionLong = "\(appVersion) (build \(appBuild), \(appCommit))"
 
 struct AgentStatus: Codable, Equatable {
     var id: String
@@ -50,7 +54,7 @@ enum Env {
                                running: running != nil)
         }
         return EnvStatus(
-            version: appVersion,
+            version: appVersionLong,
             appPath: path,
             inApplications: dirs.contains { path.hasPrefix($0) },
             translocated: path.contains("/AppTranslocation/"),

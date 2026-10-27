@@ -9,7 +9,8 @@ import SwiftUI
 struct CodexSource: AgentSource {
     let info = AgentInfo(id: "codex", name: "Codex", short: "Codex",
                          color: Color(red: 0.06, green: 0.64, blue: 0.5),
-                         bundleIDs: ["com.openai.codex"], appNames: ["Codex"], cli: true)
+                         bundleIDs: ["com.openai.codex"], appNames: ["Codex.app"], cli: true, monogram: "Cx",
+                         iconURLs: ["https://github.com/openai.png?size=256"])
 
     func root(_ home: String) -> String {
         if home == NSHomeDirectory(), let d = ProcessInfo.processInfo.environment["CODEX_HOME"], !d.isEmpty { return d }

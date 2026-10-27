@@ -18,6 +18,12 @@ struct AgentInfo {
     let appNames: [String]
     /// The agent is (also) a terminal CLI: clicking a session may go to the terminal hosting it.
     let cli: Bool
+    /// Extra app names (prefix) used ONLY as icon source, e.g. a helper app the CLI installs.
+    var iconApps: [String] = []
+    /// Letters for the fallback icon when no app icon is available
+    var monogram: String = "?"
+    /// Official icon sources (the project's own GitHub), downloaded only when the user asks — never bundled
+    var iconURLs: [String] = []
 }
 
 struct SourceError: Error, CustomStringConvertible {
@@ -53,7 +59,10 @@ enum Timing {
 // MARK: - Registry
 
 enum Agents {
-    static let all: [AgentSource] = [MCodeSource(), ClaudeCodeSource(), CodexSource(), KimiSource(), ZCodeSource()]
+    static let all: [AgentSource] = [
+        ClaudeCodeSource(), CodexSource(), GeminiCLISource(), DeepSeekHarnessSource(), QwenCodeSource(), OpenCodeSource(),
+        KimiSource(), ZCodeSource(), MCodeSource(),
+    ]
 
     static func find(_ id: String) -> AgentSource? { all.first { $0.info.id == id } }
     static func info(_ id: String) -> AgentInfo? { find(id)?.info }

@@ -8,7 +8,8 @@ import SwiftUI
 struct ZCodeSource: AgentSource {
     let info = AgentInfo(id: "zcode", name: "ZCode", short: "ZCode",
                          color: Color(red: 0.62, green: 0.49, blue: 1.0),
-                         bundleIDs: ["dev.zcode.app"], appNames: ["ZCode"], cli: false)
+                         bundleIDs: ["dev.zcode.app"], appNames: ["ZCode.app"], cli: false, monogram: "Z",
+                         iconURLs: ["https://github.com/zai-org.png?size=256"])
 
     func tasksDB(_ home: String) -> String { home + "/.zcode/v2/tasks-index.sqlite" }
     func partsDB(_ home: String) -> String { home + "/.zcode/cli/db/db.sqlite" }

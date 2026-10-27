@@ -234,6 +234,7 @@ struct StatusRow<Trailing: View>: View {
     let ok: Bool?
     let title: String
     let detail: String
+    var image: NSImage? = nil
     @ViewBuilder var trailing: () -> Trailing
 
     var body: some View {
@@ -241,6 +242,9 @@ struct StatusRow<Trailing: View>: View {
             Image(systemName: ok == true ? "checkmark.circle.fill" : ok == false ? "xmark.circle.fill" : "exclamationmark.circle.fill")
                 .font(.system(size: 18))
                 .foregroundColor(ok == true ? Palette.green : ok == false ? Palette.urgent : Palette.wait)
+            if let image {
+                Image(nsImage: image).resizable().interpolation(.high).frame(width: 26, height: 26)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.system(size: 13, weight: .semibold))
                 Text(detail)
@@ -259,8 +263,8 @@ struct StatusRow<Trailing: View>: View {
 }
 
 extension StatusRow where Trailing == EmptyView {
-    init(ok: Bool?, title: String, detail: String) {
-        self.init(ok: ok, title: title, detail: detail, trailing: { EmptyView() })
+    init(ok: Bool?, title: String, detail: String, image: NSImage? = nil) {
+        self.init(ok: ok, title: title, detail: detail, image: image, trailing: { EmptyView() })
     }
 }
 
@@ -399,7 +403,7 @@ struct CheckPage: View {
                        subtitle: "灵动岛会读取这台 Mac 上已安装的 AI 编程助手的本地状态。至少有一个是绿色就可以继续。")
             VStack(spacing: 6) {
                 ForEach(s.env.agents, id: \.id) { a in
-                    StatusRow(ok: a.dataPath != nil ? true : nil, title: a.name, detail: detail(a))
+                    StatusRow(ok: a.dataPath != nil ? true : nil, title: a.name, detail: detail(a), image: AgentIcons.image(a.id))
                 }
                 StatusRow(ok: s.env.inApplications ? true : nil, title: "安装位置",
                           detail: s.env.inApplications ? "已在「应用程序」文件夹里" : "现在是从「\(folderName)」运行的。移到「应用程序」后，开机自启和权限都更稳定。") {

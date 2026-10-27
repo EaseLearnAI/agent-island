@@ -84,9 +84,9 @@ struct IslandView: View {
 
     @ViewBuilder func compactIcon(_ k: CompactKind) -> some View {
         switch k {
-        case .waiting: SessionGlyph(state: "waiting", size: 20, color: m.activeSessions.first?.agentColor ?? Palette.accent)
-        case .running: SpinnerView(size: 20, color: m.activeSessions.first(where: { $0.state == "running" })?.agentColor ?? Palette.accent)
-        case .stalled: SessionGlyph(state: "stalled", size: 20)
+        case .waiting: AgentAvatar(agent: m.activeSessions.first { $0.state == "waiting" }?.agent ?? "", state: "waiting", size: 20)
+        case .running: AgentAvatar(agent: m.activeSessions.first { $0.state == "running" }?.agent ?? "", state: "running", size: 22)
+        case .stalled: AgentAvatar(agent: m.activeSessions.first { $0.state == "stalled" }?.agent ?? "", state: "stalled", size: 20)
         case .finished(let ok):
             if ok { CheckDraw(size: 18) } else { FailMark(size: 18) }
         }
@@ -164,7 +164,7 @@ struct IslandView: View {
                 .foregroundColor(color)
             } right: {
                 HStack(spacing: 5) {
-                    Circle().fill(s.agentColor).frame(width: 7, height: 7)
+                    Image(nsImage: AgentIcons.image(s.agent)).resizable().interpolation(.high).frame(width: 14, height: 14)
                     Text(s.agentShort).font(.system(size: 10.5, weight: .bold, design: .monospaced)).foregroundColor(.white.opacity(0.55))
                 }
             }
@@ -174,11 +174,7 @@ struct IslandView: View {
                     case "done": CheckDraw(size: 36)
                     case "failed": FailMark(size: 36)
                     default:
-                        ZStack {
-                            Circle().fill(Palette.wait.opacity(0.14))
-                            SessionGlyph(state: "waiting", size: 28, color: s.agentColor)
-                        }
-                        .frame(width: 36, height: 36)
+                        AgentAvatar(agent: s.agent, state: "waiting", size: 36)
                     }
                 }
                 VStack(alignment: .leading, spacing: 3) {
@@ -288,8 +284,8 @@ struct IslandView: View {
         let accent = s.state == "waiting" || s.state == "failed"
         return HoverRow(radius: 12, base: .white.opacity(0.045), action: { m.openSession(s); m.settle() }) { hover in
             HStack(spacing: 10) {
-                SessionGlyph(state: s.state, size: 22, color: s.agentColor)
-                    .frame(width: 28, height: 28)
+                AgentAvatar(agent: s.agent, state: s.state, size: 28)
+                    .frame(width: 30, height: 30)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(s.name)
                         .font(.system(size: 13, weight: .semibold))
