@@ -25,13 +25,20 @@ enum AgentIcons {
     /// App bundle that provides the icon: the agent's desktop app, else a helper app listed in iconApps.
     static func iconApp(_ info: AgentInfo) -> URL? {
         if ProcessInfo.processInfo.environment["AGENT_ISLAND_NO_APP_ICONS"] == "1" { return nil }
-        if let u = AppLocator.installed(info) { return u }
+        if let u = AppLocator.installed(info), hasOwnIcon(u) { return u }
         for dir in ["/Applications", NSHomeDirectory() + "/Applications"] {
             for n in Files.list(dir) where n.hasSuffix(".app") && info.iconApps.contains(where: { n.hasPrefix($0) }) {
-                return URL(fileURLWithPath: dir).appendingPathComponent(n)
+                let u = URL(fileURLWithPath: dir).appendingPathComponent(n)
+                if hasOwnIcon(u) { return u }
             }
         }
         return nil
+    }
+
+    /// Helper apps without an icon would show the generic app icon — skip them
+    static func hasOwnIcon(_ app: URL) -> Bool {
+        let d = Bundle(url: app)?.infoDictionary
+        return d?["CFBundleIconFile"] != nil || d?["CFBundleIconName"] != nil
     }
 
     static func resolve(_ id: String) -> (NSImage, IconInfo) {
