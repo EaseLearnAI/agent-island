@@ -1,0 +1,5 @@
+build/
+test/tmp/
+.DS_Store
+*.dmg
+*.zip
